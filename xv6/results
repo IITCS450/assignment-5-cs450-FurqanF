@@ -1,0 +1,62 @@
+# Assignment 5 – User-Level Threads + Mutex: Results
+
+## Context-Switching Approach
+
+Threads are switched using `uswtch(struct context **old, struct context *new)`
+implemented in `uswtch.S`. The routine:
+
+1. Saves the current thread's callee-saved registers (`ebp`, `ebx`, `esi`, `edi`)
+   and stack pointer into `*old`.
+2. Loads `new` as the stack pointer.
+3. Pops the saved registers of the incoming thread and returns into it.
+
+The return address at the top of each thread's saved context frame determines
+where execution resumes: for a brand-new thread this is `thread_stub`, which
+calls the user function and then marks the thread ZOMBIE before yielding.
+
+The scheduler (`thread_yield`) is purely cooperative: a thread must call
+`thread_yield()` to give up the CPU. The scheduler uses round-robin selection
+over all RUNNABLE threads.
+
+## Mutex Implementation
+
+`umutex_t` contains a single `int locked` field. Because scheduling is
+cooperative, only one thread runs at a time, making the check-and-set sequence
+in `mutex_lock` safe without hardware atomics:
+
+```
+while(m->locked) thread_yield();
+m->locked = 1;
+```
+
+A thread that finds the lock held yields immediately, avoiding busy-waiting
+from a single thread monopolizing the CPU.
+
+## Test: Producer-Consumer (`test_pc`)
+
+Two producer threads each insert 200 items into an 8-slot circular buffer;
+one consumer thread removes all 400 items. The mutex protects all accesses to
+`buf`, `head`, `tail`, and `count`. Threads yield when the buffer is full
+(producers) or empty (consumer), allowing cooperative progress.
+
+Expected output (every 100 items consumed):
+```
+consumer got 100 items (last=...)
+consumer got 200 items (last=...)
+consumer got 300 items (last=...)
+consumer got 400 items (last=...)
+test_pc: done
+```
+
+## Limitations
+
+| Property | Value |
+|---|---|
+| Maximum threads | 16 (including main) |
+| Stack size per thread | 4096 bytes |
+| Scheduling policy | Cooperative round-robin |
+| Atomic ops required | None (cooperative guarantees safety) |
+| Kernel modifications | None |
+
+Deeply recursive thread functions may overflow the 4096-byte stack. This can
+be raised by increasing `STACK_SIZE` in `uthread.c`.
